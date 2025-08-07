@@ -5,58 +5,48 @@ import { supabase } from "../lib/supabase";
 const ProfileUpdate = () => {
   const { user } = useAuth();
   const [image, setImage] = useState(null);
-  const [previewUrl, setPreviewUrl] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState("/Images/me.jpeg");
   const [username, setUsername] = useState("");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // 1️⃣ Load current profile when page opens
+  // Fetch profile on mount
   useEffect(() => {
+    if (!user) return;
+
     const fetchProfile = async () => {
-      if (!user) return;
+      try {
+        const { data, error } = await supabase
+          .from("users")
+          .select("username, avatar_url, status")
+          .eq("id", user.id)
+          .maybeSingle();
 
-      const { data, error } = await supabase
-        .from("users")
-        .select("username, avatar_url, status")
-        .eq("id", user.id)
-        .maybeSingle();
+        if (error) throw error;
 
-      if (!error && data) {
-        setUsername(data.username || "");
-        setStatus(data.status || "");
-        setPreviewUrl(data.avatar_url || "/Images/me.jpeg");
+        if (data) {
+          setUsername(data.username || "");
+          setStatus(data.status || "");
+          setPreviewUrl(data.avatar_url?.trim() || "/Images/me.jpeg");
+        }
+      } catch (err) {
+        console.error("Error fetching profile:", err.message);
       }
     };
 
     fetchProfile();
   }, [user]);
 
-  // 2️⃣ Handle file change
+  // Handle avatar image selection
   const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setImage(file);
-      setPreviewUrl(URL.createObjectURL(file));
-    }
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImage(file);
+    setPreviewUrl(URL.createObjectURL(file));
   };
 
-  // ✅ Ensure avatars bucket exists before uploading
-  const ensureBucketExists = async () => {
-    const { data: buckets } = await supabase.storage.listBuckets();
-    const exists = buckets?.some((bucket) => bucket.name === "avatars");
-
-    if (!exists) {
-      const { error } = await supabase.storage.createBucket("avatars", {
-        public: true,
-      });
-      if (error) {
-        console.error("Error creating bucket:", error.message);
-        throw error;
-      }
-    }
-  };
-
-  // 3️⃣ Save profile updates
+  // Handle profile update
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!user) return;
@@ -65,13 +55,11 @@ const ProfileUpdate = () => {
     let avatarUrl = previewUrl;
 
     try {
-      await ensureBucketExists();
-
-      // Upload image if selected
+      // Upload new avatar if changed
       if (image) {
         const fileExt = image.name.split(".").pop();
-        const fileName = `${user.id}-${Date.now()}.${fileExt}`;
-        const filePath = fileName; // ✅ No "avatars/" prefix
+        const fileName = `${Date.now()}.${fileExt}`;
+        const filePath = `${user.id}/${fileName}`;
 
         const { error: uploadError } = await supabase.storage
           .from("avatars")
@@ -86,12 +74,12 @@ const ProfileUpdate = () => {
         avatarUrl = publicUrlData.publicUrl;
       }
 
-      // Update user table
+      // Update DB record
       const { error: updateError } = await supabase
         .from("users")
         .update({
-          username,
-          status,
+          username: username.trim(),
+          status: status.trim(),
           avatar_url: avatarUrl,
         })
         .eq("id", user.id);
@@ -108,7 +96,7 @@ const ProfileUpdate = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
+    <div className="min-h-2.5 flex items-center justify-center bg-gray-100 px-4">
       <div className="bg-white p-6 rounded-lg shadow-md w-full max-w-md">
         <form
           onSubmit={handleSubmit}
@@ -118,7 +106,7 @@ const ProfileUpdate = () => {
             Profile Details
           </h3>
 
-          {/* Avatar */}
+          {/* Avatar Upload */}
           <label htmlFor="avatar" className="cursor-pointer">
             <input
               onChange={handleImageChange}
@@ -128,7 +116,7 @@ const ProfileUpdate = () => {
               hidden
             />
             <img
-              src={previewUrl || "/Images/me.jpeg"}
+              src={previewUrl}
               alt="avatar"
               className="w-24 h-24 rounded-full object-cover border-2 border-gray-300 hover:opacity-80 transition"
             />
@@ -149,12 +137,12 @@ const ProfileUpdate = () => {
             placeholder="Write profile bio"
             value={status}
             onChange={(e) => setStatus(e.target.value)}
-            required
             rows={3}
+            required
             className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           ></textarea>
 
-          {/* Save button */}
+          {/* Save Button */}
           <button
             type="submit"
             disabled={loading}
@@ -163,16 +151,6 @@ const ProfileUpdate = () => {
             {loading ? "Saving..." : "Save"}
           </button>
         </form>
-
-        {/* Preview */}
-        <div className="mt-6 text-center">
-          <p className="text-sm text-gray-600 mb-1">Current Profile Picture:</p>
-          <img
-            src={previewUrl || "/Images/me.jpeg"}
-            alt="preview"
-            className="w-20 h-20 rounded-full mx-auto object-cover border border-gray-300"
-          />
-        </div>
       </div>
     </div>
   );

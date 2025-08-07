@@ -9,7 +9,10 @@ function App() {
   return (
     <AuthProvider>
       <Routes>
+        {/* Public Route */}
         <Route path="/" element={<Login />} />
+
+        {/* Protected Routes */}
         <Route
           path="/chat"
           element={
@@ -18,7 +21,16 @@ function App() {
             </ProtectedRoute>
           }
         />
-        <Route path="/profile" element={<ProfileUpdate />} />
+
+        {/* Profile Update (Protected as well) */}
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <ProfileUpdate />
+            </ProtectedRoute>
+          }
+        />
       </Routes>
     </AuthProvider>
   );
