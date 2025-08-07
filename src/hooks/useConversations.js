@@ -12,92 +12,90 @@ export const useConversation = (otherUserIdentifier) => {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
 
   useEffect(() => {
-    if (!user || !otherUserIdentifier) return;
+    if (!user || !otherUserIdentifier) {
+      console.log("Missing required data:", { user: !!user, otherUserIdentifier });
+      return;
+    }
 
     const getOrCreateConversation = async () => {
       setLoading(true);
       setError(null);
 
       try {
-        let otherUserId = otherUserIdentifier;
+        // 1. Verify current user exists
+        const { data: currentUser, error: currentUserError } = await supabase
+          .from("users")
+          .select("id")
+          .eq("id", user.id)
+          .maybeSingle();
 
-        // Step 1: Lookup by username/email if not UUID
+        if (currentUserError || !currentUser) throw new Error("Current user not found");
+
+        // 2. Get other user's ID
+        let otherUserId = otherUserIdentifier;
         if (!isValidUUID(otherUserIdentifier)) {
-          const { data: usernameResult } = await supabase
+          const { data: foundUser, error: findError } = await supabase
             .from("users")
             .select("id")
-            .eq("username", otherUserIdentifier)
-            .maybeSingle();
+            .or(`username.eq.${otherUserIdentifier},email.eq.${otherUserIdentifier}`);
 
-          if (usernameResult) {
-            otherUserId = usernameResult.id;
-          } else {
-            const { data: emailResult } = await supabase
-              .from("users")
-              .select("id")
-              .eq("email", otherUserIdentifier)
-              .maybeSingle();
-
-            if (emailResult) {
-              otherUserId = emailResult.id;
-            } else {
-              throw new Error(`User "${otherUserIdentifier}" not found`);
-            }
+          if (findError || !foundUser?.length) {
+            throw new Error(`User '${otherUserIdentifier}' not found`);
           }
+          otherUserId = foundUser[0].id;
+        } else {
+          const { data: existingUser, error: verifyError } = await supabase
+            .from("users")
+            .select("id")
+            .eq("id", otherUserIdentifier)
+            .maybeSingle();
+          if (verifyError || !existingUser) throw new Error("User not found");
         }
 
-        if (otherUserId === user.id) {
-          throw new Error("Cannot create conversation with yourself");
-        }
+        if (otherUserId === user.id) throw new Error("Cannot create conversation with yourself");
 
-        // Step 2: Check if a conversation already exists for both users
-        const { data: allParticipantRows, error: participantsError } = await supabase
+        // 3. Check existing conversation
+        const { data: myConvos } = await supabase
           .from("conversation_participants")
-          .select("conversation_id, user_id")
-          .in("user_id", [user.id, otherUserId]);
+          .select("conversation_id")
+          .eq("user_id", user.id);
 
-        if (participantsError) throw participantsError;
+        const myConvoIds = myConvos?.map(p => p.conversation_id) || [];
 
-        // Count how many times each conversation_id appears
-        const conversationCount = {};
-        allParticipantRows.forEach((row) => {
-          conversationCount[row.conversation_id] =
-            (conversationCount[row.conversation_id] || 0) + 1;
-        });
+        const { data: sharedConvos } = await supabase
+          .from("conversation_participants")
+          .select("conversation_id")
+          .eq("user_id", otherUserId)
+          .in("conversation_id", myConvoIds);
 
-        // Find a conversation where both users are participants (count === 2)
-        const sharedConversationId = Object.entries(conversationCount)
-          .find(([_, count]) => count === 2)?.[0];
-
-        if (sharedConversationId) {
-          setConversationId(sharedConversationId);
-          setLoading(false);
+        const existingConvoId = sharedConvos?.[0]?.conversation_id;
+        if (existingConvoId) {
+          setConversationId(existingConvoId);
           return;
         }
 
-        // Step 3: If no existing conversation, create one
-        const { data: newConvo, error: convoError } = await supabase
+        // 4. Create new conversation
+        const { data: convo, error: convoErr } = await supabase
           .from("conversations")
           .insert([{ is_group: false, creator_id: user.id }])
           .select()
           .single();
 
-        if (convoError) throw convoError;
+        if (convoErr) throw convoErr;
 
-        // Add both users as participants
-        const { error: participantInsertError } = await supabase
+        // 5. Add participants
+        const { error: addErr } = await supabase
           .from("conversation_participants")
           .insert([
-            { conversation_id: newConvo.id, user_id: user.id },
-            { conversation_id: newConvo.id, user_id: otherUserId },
+            { conversation_id: convo.id, user_id: user.id },
+            { conversation_id: convo.id, user_id: otherUserId },
           ]);
 
-        if (participantInsertError) throw participantInsertError;
+        if (addErr) throw addErr;
 
-        setConversationId(newConvo.id);
-      } catch (err) {
-        console.error("useConversation error:", err);
-        setError(err.message);
+        setConversationId(convo.id);
+      } catch (e) {
+        setError(e.message);
       } finally {
         setLoading(false);
       }
